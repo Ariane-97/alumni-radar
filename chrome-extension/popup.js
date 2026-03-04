@@ -1,6 +1,7 @@
 // popup.js — Alumni Radar v4.0
 
-const TARGET_CLASS = "_0b0793cb _31e492f1 bf5ce2f1 d3e4cf96 _16d086f0 _9bceb233 e41563ff ffd1c173 _62e1dd3a";
+const TARGET_CLASS   = "_0b0793cb _31e492f1 bf5ce2f1 d3e4cf96 _16d086f0 _9bceb233 e41563ff ffd1c173 _62e1dd3a";
+const COMPANY_CLASS  = "_0b0793cb c33da4c6 _131eef0e ac93aeb3 e1b2f5ba _7b1bee50 b532e007 _376ae575";
 
 let extractedData = null;
 let tableData     = [];
@@ -33,8 +34,9 @@ function extractNameFromUrl(url) {
   return nameP.map(w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase()).join(' ');
 }
 
-function extractJobFromHtml(html) {
-  const escaped = TARGET_CLASS.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function extractJobFromHtml(html, cls) {
+  if (!cls) cls = TARGET_CLASS;
+  const escaped = cls.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   const pat = new RegExp(`<[^>]+class=["\'][^"\']*${escaped}[^"\']*["\'][^>]*>([\\s\\S]*?)<\\/p>`,'i');
   const m = pat.exec(html);
   if (!m) return null;
@@ -72,17 +74,19 @@ document.getElementById('extractBtn').addEventListener('click', async () => {
     if (!data || data.error) throw new Error(data?.error||'Échec');
     extractedData = data;
 
-    const job  = extractJobFromHtml(data.html);
-    const name = extractNameFromUrl(data.url);
+    const job     = extractJobFromHtml(data.html);
+    const company = extractJobFromHtml(data.html, COMPANY_CLASS);
+    const name    = extractNameFromUrl(data.url);
 
     const box = document.getElementById('profileResult');
     box.innerHTML = `
       <div class="info-row"><span class="info-label">👤 Nom</span><span class="info-value">${esc(name||'—')}</span></div>
       <div class="info-row"><span class="info-label">💼 Poste actuel</span><span class="info-value">${esc(job||'—')}</span></div>
+      <div class="info-row"><span class="info-label">🏢 Entreprise</span><span class="info-value">${esc(company||'—')}</span></div>
       <button class="add-btn" id="addToTableBtn">➕ Ajouter au tableau</button>`;
 
     document.getElementById('addToTableBtn').addEventListener('click', () => {
-      tableData.push({ name: name||'—', job: job||'—', url: data.url, error:'' });
+      tableData.push({ name: name||'—', job: job||'—', company: company||'—', url: data.url, error:'' });
       updateTableCount();
       renderTablePanel();
       switchTab('table');
@@ -121,14 +125,15 @@ function handleFile(file) {
 
 function showColMapper(rows, cols) {
   if (!cols) cols = Object.keys(rows[0]);
-  ['colName','colJob','colUrl'].forEach(id => {
+  ['colName','colJob','colCompany','colUrl'].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = cols.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
   });
   // Auto-détecter les colonnes
-  autoDetect(cols, 'colName', ['nom','name','prenom','prénom','firstname','lastname']);
-  autoDetect(cols, 'colJob',  ['metier','métier','poste','job','title','fonction','emploi']);
-  autoDetect(cols, 'colUrl',  ['url','linkedin','lien','link','profil']);
+  autoDetect(cols, 'colName',    ['nom','name','prenom','prénom','firstname','lastname']);
+  autoDetect(cols, 'colJob',     ['metier','métier','poste','job','title','fonction','emploi']);
+  autoDetect(cols, 'colCompany', ['entreprise','company','société','societe','employeur','employer','organization']);
+  autoDetect(cols, 'colUrl',     ['url','linkedin','lien','link','profil']);
 
   renderPreview(rows.slice(0,5), cols);
   document.getElementById('colMapSection').style.display = 'block';
@@ -155,18 +160,21 @@ document.getElementById('stopScanBtn').addEventListener('click',  () => { scanSt
 async function startScan() {
   if (!importedRows.length) return;
 
-  const colName = document.getElementById('colName').value;
-  const colJob  = document.getElementById('colJob').value;
-  const colUrl  = document.getElementById('colUrl').value;
+  const colName    = document.getElementById('colName').value;
+  const colJob     = document.getElementById('colJob').value;
+  const colUrl     = document.getElementById('colUrl').value;
+  const colCompany = document.getElementById('colCompany').value;
 
   // Préparer les données
   const rows = importedRows.map(r => ({
-    name:    String(r[colName]||''),
-    job:     String(r[colJob] ||''),
-    url:     String(r[colUrl] ||''),
-    newJob:  null,
-    error:   '',
-    _raw:    r
+    name:       String(r[colName]   ||''),
+    job:        String(r[colJob]    ||''),
+    company:    String(r[colCompany]||''),
+    url:        String(r[colUrl]    ||''),
+    newJob:     null,
+    newCompany: null,
+    error:      '',
+    _raw:       r
   }));
 
   scanStopped = false;
@@ -204,7 +212,9 @@ async function startScan() {
     try {
       const result = await chrome.runtime.sendMessage({ action: 'scanProfile', url: row.url });
       if (result.error) throw new Error(result.error);
-      row.newJob = result.job || null;
+      row.newJob     = result.job     || null;
+      row.newCompany = result.company || null;
+      row.newName    = (!row.name || row.name.trim() === '') ? (result.name || null) : null;
       if (!row.newJob) row.error = 'Poste non trouvé';
       appendLog(row, row.newJob ? '✅' : '⚠️');
     } catch(e) {
@@ -223,16 +233,17 @@ async function startScan() {
 
   // Mettre à jour le tableau interne
   tableData = rows.map(r => ({
-    name:  r.name,
-    job:   r.newJob || r.job,
-    url:   r.url,
-    error: r.error
+    name:    r.newName    || r.name,
+    job:     r.newJob     || r.job,
+    company: r.newCompany || r._raw[colCompany] || '',
+    url:     r.url,
+    error:   r.error
   }));
   updateTableCount();
   renderTablePanel();
 
   // Préparer l'export Excel mis à jour
-  prepareUpdatedWorkbook(rows, colJob);
+  prepareUpdatedWorkbook(rows, colJob, colCompany, colName);
   document.getElementById('exportDoneBtn').style.display = 'block';
   document.getElementById('startScanBtn').disabled = false;
   document.getElementById('scanWarning').style.display = 'none';
@@ -257,15 +268,17 @@ function appendLog(row, icon) {
 // ── Export Excel mis à jour ───────────────────────────────────
 let updatedWbData = null;
 
-function prepareUpdatedWorkbook(rows, colJob) {
+function prepareUpdatedWorkbook(rows, colJob, colCompany, colName) {
   // Construire les headers : conserver les colonnes d'origine + ajouter Erreur
   const headers = [...importedHeaders];
   if (!headers.includes('Erreur')) headers.push('Erreur');
 
-  // Reconstruire les lignes avec le métier mis à jour
+  // Reconstruire les lignes avec le métier et l'entreprise mis à jour
   const updatedRows = rows.map(row => {
     const r = { ...row._raw };
-    if (row.newJob) r[colJob] = row.newJob;
+    if (row.newName    && (!r[colName]    || r[colName].trim()    === '')) r[colName]    = row.newName;
+    if (row.newJob)     r[colJob]     = row.newJob;
+    if (row.newCompany) r[colCompany] = row.newCompany;
     r['Erreur'] = row.error || '';
     return r;
   });
@@ -299,13 +312,14 @@ function renderTablePanel() {
   box.innerHTML = `
     <table class="main">
       <thead><tr>
-        <th>#</th><th>Nom</th><th>Poste actuel</th>${hasErr?'<th>Erreur</th>':''}
+        <th>#</th><th>Nom</th><th>Poste actuel</th><th>Entreprise</th>${hasErr?'<th>Erreur</th>':''}
       </tr></thead>
       <tbody>
         ${tableData.map((r,i)=>`<tr>
           <td class="td-num">${i+1}</td>
           <td class="td-name"><a class="profile-link" data-url="${esc(r.url)}">${esc(r.name)}</a></td>
           <td class="td-job">${esc(r.job)}</td>
+          <td class="td-job">${esc(r.company||'—')}</td>
           ${hasErr?`<td class="td-err">${esc(r.error)}</td>`:''}
         </tr>`).join('')}
       </tbody>
@@ -322,8 +336,8 @@ function updateTableCount() {
 
 document.getElementById('exportCsvBtn').addEventListener('click', () => {
   const hasErr = tableData.some(r=>r.error);
-  const headers = ['Nom','Poste actuel','URL'].concat(hasErr?['Erreur']:[]);
-  const rows = tableData.map(r=>[r.name,r.job,r.url].concat(hasErr?[r.error]:[]));
+  const headers = ['Nom','Poste actuel','Entreprise','URL'].concat(hasErr?['Erreur']:[]);
+  const rows = tableData.map(r=>[r.name,r.job,r.company||'',r.url].concat(hasErr?[r.error]:[]));
   const csv  = [headers,...rows].map(r=>r.map(c=>`"${String(c||'').replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
   const url  = URL.createObjectURL(blob);

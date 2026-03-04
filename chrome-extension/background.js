@@ -1,7 +1,8 @@
 // background.js — Service worker Alumni Radar
 // Gère le scan automatique des profils LinkedIn en arrière-plan
 
-const TARGET_CLASS = "_0b0793cb _31e492f1 bf5ce2f1 d3e4cf96 _16d086f0 _9bceb233 e41563ff ffd1c173 _62e1dd3a";
+const TARGET_CLASS   = "_0b0793cb _31e492f1 bf5ce2f1 d3e4cf96 _16d086f0 _9bceb233 e41563ff ffd1c173 _62e1dd3a";
+const COMPANY_CLASS  = "_0b0793cb c33da4c6 _131eef0e ac93aeb3 e1b2f5ba _7b1bee50 b532e007 _376ae575";
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'scanProfile') {
@@ -40,8 +41,10 @@ async function scanProfile(url) {
     if (!r.ok) throw new Error('HTTP non-OK');
 
     // Extraire le poste
-    const job = extractJob(r.html, TARGET_CLASS);
-    return { job };
+    const job     = extractJob(r.html, TARGET_CLASS);
+    const company = extractJob(r.html, COMPANY_CLASS);
+    const name    = extractNameFromUrl(url);
+    return { job, company, name };
 
   } finally {
     // Toujours fermer l'onglet
@@ -49,6 +52,15 @@ async function scanProfile(url) {
       try { await chrome.tabs.remove(tabId); } catch(e) {}
     }
   }
+}
+
+function extractNameFromUrl(url) {
+  const match = (url||'').match(/\/in\/(.+?)(?:\/|$)/);
+  if (!match) return null;
+  const parts = match[1].split('-');
+  const last  = parts[parts.length - 1];
+  const nameP = /\d/.test(last) ? parts.slice(0, -1) : parts;
+  return nameP.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
 
 function extractJob(html, className) {
